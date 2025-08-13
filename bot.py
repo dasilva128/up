@@ -3,102 +3,130 @@
 import os
 import time
 import asyncio
-import aiohttp
 from configs import Config
 from pyrogram import Client, filters, errors
-from core.display_progress import progress_for_pyrogram, humanbytes
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InlineQueryResultArticle, \
     InputTextMessageContent, InlineQuery
+from pyrogram.enums import ParseMode
+from core.display_progress import progress_for_pyrogram, humanbytes
 
 Bot = Client(Config.SESSION_NAME, bot_token=Config.BOT_TOKEN, api_id=Config.API_ID, api_hash=Config.API_HASH)
 
-# ... (بقیه کدها بدون تغییر باقی می‌مانند تا بخش آپلود)
 
-@Bot.on_message(filters.private & filters.media)
-async def _main(_, message):
-    await message.reply_text(
-        "Where do you want to upload?",
+@Bot.on_message(filters.command("start"))
+async def start_handler(_, cmd):
+    await cmd.reply_text(
+        "HI, I am Cloud Uploads Manager Bot!\n\nSend me any media file, and I will upload it to Telegram and provide a download link.\n\nCheck > /help < for more info.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Developer", url="https://t.me/Savior_128"),
+                 InlineKeyboardButton("Support Group", url="https://t.me/linux_repo")],
+                [InlineKeyboardButton("Bots Channel", url="https://t.me/Discovery_Updates")],
+                [InlineKeyboardButton("Bot's Source Code", url="https://github.com/Savior_128/Cloud-UPManager-Bot")]
+            ]
+        )
+    )
+
+
+@Bot.on_message(filters.command("help"))
+async def help_handler(_, cmd):
+    await cmd.reply_text(
+        """
+Send me any media file, and I will upload it to Telegram and provide a download link.
+
+**Commands:**
+- `/start`: Start the bot
+- `/help`: Show this help message
+
+**Note**: The maximum file size is 2GB (4GB for premium accounts). Files are stored in Telegram and can be accessed via the provided link.
+""",
         parse_mode=ParseMode.MARKDOWN,
         disable_web_page_preview=True,
         reply_markup=InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("Upload to GoFile.io", callback_data="uptogofile"),
-                 InlineKeyboardButton("Upload to Streamtape", callback_data="uptostreamtape")],
-                [InlineKeyboardButton("Upload to Pixeldrain", callback_data="uptopixeldrain")]  # دکمه جدید
+                [InlineKeyboardButton("Support Group", url="https://t.me/linux_repo"),
+                 InlineKeyboardButton("Developer", url="https://t.me/Savior_128")]
             ]
-        ),
-        quote=True
+        )
     )
 
-# ... (بقیه کدها بدون تغییر باقی می‌مانند تا بخش CallbackQuery)
 
-@Bot.on_callback_query()
-async def button(bot, data: CallbackQuery):
-    cb_data = data.data
-    if cb_data == "uptogofile":
-        # کد موجود برای GoFile.io بدون تغییر
-        pass
-    elif cb_data == "uptostreamtape":
-        # کد موجود برای Streamtape بدون تغییر
-        pass
-    elif cb_data == "uptopixeldrain":
-        downloadit = data.message.reply_to_message
-        a = await data.message.edit("Downloading to my Server ...", parse_mode=ParseMode.MARKDOWN,
-                                    disable_web_page_preview=True)
-        dl_loc = os.path.join(Config.DOWNLOAD_DIR, str(data.from_user.id))
+@Bot.on_message(filters.private & filters.media)
+async def upload_to_telegram(_, message):
+    await message.reply_text(
+        "Uploading your file to Telegram...",
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True,
+        quote=True
+    )
+    try:
+        # دانلود فایل به سرور محلی
+        dl_loc = os.path.join(Config.DOWNLOAD_DIR, str(message.from_user.id))
         os.makedirs(dl_loc, exist_ok=True)
         c_time = time.time()
-        the_media = await bot.download_media(
-            message=downloadit,
+        progress_msg = await message.reply_text("Downloading to my server...", parse_mode=ParseMode.MARKDOWN)
+        the_media = await Bot.download_media(
+            message=message,
             file_name=dl_loc,
             progress=progress_for_pyrogram,
-            progress_args=("Downloading ...", a, c_time)
-        )
-        await a.delete(True)
-        try:
-            async with aiohttp.ClientSession() as session:
-                files = {'file': open(the_media, 'rb')}
-                headers = {'Authorization': f'Bearer {Config.PIXELDRAIN_API_KEY}'}
-                response = await session.post("https://pixeldrain.com/api/file", data=files, headers=headers)
-                data_f = await response.json()
-                if response.status == 200 and data_f.get('success'):
-                    file_id = data_f['id']
-                    download_url = f"https://pixeldrain.com/u/{file_id}"
-                    filename = os.path.basename(the_media)
-                    await data.message.reply_to_message.reply_text(
-                        f"**File Name:** `{filename}`\n\n**Download Link:** `{download_url}`",
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True,
-                        reply_markup=InlineKeyboardMarkup(
-                            [[InlineKeyboardButton("Open Link", url=download_url)]]
-                        )
-                    )
-                    forwarded_msg = await data.message.reply_to_message.forward(Config.LOG_CHANNEL)
-                    await bot.send_message(
-                        chat_id=Config.LOG_CHANNEL,
-                        text=f"#PIXELDRAIN_UPLOAD:\n\n[{data.from_user.first_name}](tg://user?id={data.from_user.id}) Uploaded to Pixeldrain !!\n\n**URL:** {download_url}",
-                        reply_to_message_id=forwarded_msg.message_id,
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True
-                    )
-                else:
-                    await data.message.reply_to_message.reply_text(
-                        f"Failed to upload to Pixeldrain!\n\n**Error:** {data_f.get('message', 'Unknown error')}",
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True
-                    )
-                os.remove(the_media)
-        except Exception as err:
-            await data.message.reply_to_message.reply_text(
-                f"Something went wrong!\n\n**Error:** `{err}`",
-                parse_mode=ParseMode.MARKDOWN,
-                disable_web_page_preview=True
+            progress_args=(
+                "Downloading ...",
+                progress_msg,
+                c_time
             )
-    elif cb_data == "deletestream":
-        # کد موجود برای حذف فایل Streamtape
-        pass
-    elif cb_data == "showcreds":
-        # کد موجود برای نمایش تنظیمات
-        pass
+        )
+        await progress_msg.delete(True)
+
+        # آپلود فایل به کانال لاگ
+        uploaded_msg = await Bot.send_document(
+            chat_id=Config.LOG_CHANNEL,
+            document=the_media,
+            caption=f"Uploaded by [{message.from_user.first_name}](tg://user?id={message.from_user.id})\n\n**File Name**: {os.path.basename(the_media)}",
+            parse_mode=ParseMode.MARKDOWN,
+            disable_notification=True
+        )
+
+        # ایجاد لینک دانلود
+        chat_id = Config.LOG_CHANNEL
+        message_id = uploaded_msg.id
+        download_link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{message_id}"
+
+        # ارسال لینک به کاربر
+        await message.reply_text(
+            f"**File Name**: `{os.path.basename(the_media)}`\n\n**Download Link**: `{download_link}`",
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Open Link", url=download_link)]]
+            )
+        )
+
+        # ثبت لاگ
+        await Bot.send_message(
+            chat_id=Config.LOG_CHANNEL,
+            text=f"#TELEGRAM_UPLOAD:\n\n[{message.from_user.first_name}](tg://user?id={message.from_user.id}) Uploaded to Telegram !!\n\n**File Name**: {os.path.basename(the_media)}\n**URL**: {download_link}",
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True,
+            reply_to_message_id=uploaded_msg.id
+        )
+
+        # حذف فایل موقت
+        try:
+            os.remove(the_media)
+        except:
+            pass
+
+    except errors.FileTooLarge:
+        await message.reply_text(
+            "File is too large! Telegram supports up to 2GB (4GB for premium accounts).",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as err:
+        await message.reply_text(
+            f"Something went wrong!\n\n**Error**: `{err}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 
 Bot.run()
